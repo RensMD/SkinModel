@@ -11,14 +11,7 @@ Rens Doornbusch
 #include <SPI.h>
 
 #include <Adafruit_MAX31865.h>
-
-// //TODO: in target
-// #define MAX31865_FAULT_HIGHTHRESH   0x80
-// #define MAX31865_FAULT_LOWTHRESH    0x40
-// #define MAX31865_FAULT_REFINLOW     0x20
-// #define MAX31865_FAULT_REFINHIGH    0x10
-// #define MAX31865_FAULT_RTDINLOW     0x08
-// #define MAX31865_FAULT_OVUV   		0x04
+#include <PID_v1.h>
 
 /* Constants */
 // Pin numbers
@@ -57,6 +50,30 @@ const float analogResolution 		= 4095.0;
 const int pwmN 						= 6;
 const int maxN 						= 10;
 
+/* Variables */
+// TODO: Decrease globals
+
+int incomingByte;
+
+// voltmeter
+float analogRaw = 0.0;
+float voltageIn = 0.0;
+float voltageSourceRaw = 0.0;
+float voltageSourceCompensated = 0.0;
+
+// PID variables
+double tempTarget = 34.00;
+float aggKp=2000, aggKi=0, aggKd=0;
+float consKp=1500, consKi=0.01, consKd=0;
+
+// PWM variables
+double pwmOutput1; double pwmOutput2; double pwmOutput3; double pwmOutput4; double pwmOutput5; double pwmOutput6;
+double pidInput1; double pidInput2; double pidInput3; double pidInput4; double pidInput5; double pidInput6;
+
+// MAX31865 variables
+float temp1; float temp2; float temp3; float temp4; float temp5; float temp6; float temp7; float temp8; float temp9; float temp10;
+uint16_t fault1; uint16_t fault2; uint16_t fault3; uint16_t fault4; uint16_t fault5; uint16_t fault6; uint16_t fault7; uint16_t fault8; uint16_t fault9; uint16_t fault10;
+
 /* Objects */
 // Setup of MAX31865 PT100, RTD, amplifiers using hardware SPI
 Adafruit_MAX31865 maxBottom 	= Adafruit_MAX31865(PIN_MAX_BOTTOM);
@@ -70,35 +87,24 @@ Adafruit_MAX31865 maxCenter3 	= Adafruit_MAX31865(PIN_MAX_CENTER3);
 Adafruit_MAX31865 maxCenter4 	= Adafruit_MAX31865(PIN_MAX_CENTER4);
 Adafruit_MAX31865 maxCenter5 	= Adafruit_MAX31865(PIN_MAX_CENTER5);
 
-/* Variables */
-// TODO: Decrease globals
-bool displayFault = false;
-int incomingByte;
-
-// PID
-float tempTarget = 34.00;
-
-// voltmeter
-float analogRaw = 0.0;
-float voltageIn = 0.0;
-float voltageSourceRaw = 0.0;
-float voltageSourceCompensated = 0.0;
-
-// PWM variables
-int pwmValue1; int pwmValue2; int pwmValue3; int pwmValue4; int pwmValue5; int pwmValue6;
-
-// RTD variables
-float temp1; float temp2; float temp3; float temp4; float temp5; float temp6; float temp7; float temp8; float temp9; float temp10;
-uint16_t fault1; uint16_t fault2; uint16_t fault3; uint16_t fault4; uint16_t fault5; uint16_t fault6; uint16_t fault7; uint16_t fault8; uint16_t fault9; uint16_t fault10;
-
-// PWM arrays
-int pwmPinArray [pwmN] = {PIN_PWM_BOTTOM, PIN_PWM_SIDE1, PIN_PWM_SIDE2, PIN_PWM_SIDE3, PIN_PWM_SIDE4, PIN_PWM_CENTER};
-int pwmValueArray [pwmN] = {pwmValue1, pwmValue2, pwmValue3, pwmValue4, pwmValue5, pwmValue6};
+// Setup of PID controllers
+PID myPID1(&pidInput1, &pwmOutput1, &tempTarget, aggKp, aggKi, aggKd, DIRECT);
+PID myPID2(&pidInput2, &pwmOutput2, &tempTarget, aggKp, aggKi, aggKd, DIRECT);
+PID myPID3(&pidInput3, &pwmOutput3, &tempTarget, aggKp, aggKi, aggKd, DIRECT);
+PID myPID4(&pidInput4, &pwmOutput4, &tempTarget, aggKp, aggKi, aggKd, DIRECT);
+PID myPID5(&pidInput5, &pwmOutput5, &tempTarget, aggKp, aggKi, aggKd, DIRECT);
+PID myPID6(&pidInput6, &pwmOutput6, &tempTarget, aggKp, aggKi, aggKd, DIRECT);
 
 // MAX31865  arrays
 Adafruit_MAX31865 maxArray [maxN] = {maxBottom, maxSide1, maxSide2, maxSide3, maxSide4, maxCenter1, maxCenter2, maxCenter3, maxCenter4, maxCenter5};
 float tempArray [maxN] = {temp1, temp2, temp3, temp4, temp5, temp6, temp7, temp8, temp9, temp10};
 uint16_t faultArray [maxN] = {fault1, fault2, fault3, fault4, fault5, fault6, fault7, fault8, fault9, fault10};
+
+// PWM arrays
+PID pidArray [pwmN] = {myPID1, myPID2, myPID3, myPID4, myPID5, myPID6};
+int pwmPinArray [pwmN] = {PIN_PWM_BOTTOM, PIN_PWM_SIDE1, PIN_PWM_SIDE2, PIN_PWM_SIDE3, PIN_PWM_SIDE4, PIN_PWM_CENTER};
+double pidInputArray [pwmN] = {pidInput1, pidInput2, pidInput3, pidInput4, pidInput5, pidInput6};
+double pwmOutputArray [pwmN] = {pwmOutput1, pwmOutput2, pwmOutput3, pwmOutput4, pwmOutput5, pwmOutput6};
 
 
 /*********/
@@ -112,15 +118,22 @@ void setup() {
 	analogWriteResolution(12);
 	analogReadResolution(12);
 
-	// Set pinmodes
-	pinMode(PIN_DC_SENSOR, INPUT);
-	for(int i = 0; i < pwmN; i++ ){
-		pinMode(pwmPinArray[i], OUTPUT);
-	}
-
 	// Setup MAX31865 objects
 	for (int i = 0; i < maxN; i++ ) {
 		maxArray[i].begin(MAX31865_4WIRE);
+	}
+
+	// Setup PID objects
+	for (int i = 0; i < pwmN; i++ ) {
+		pidArray[i].SetMode(AUTOMATIC);
+		pidArray[i].SetOutputLimits(0,4095);
+		pidArray[i].SetTunings(consKp, consKi, consKd);
+	}
+
+	/* Set pinmodes */
+	pinMode(PIN_DC_SENSOR, INPUT);
+	for(int i = 0; i < pwmN; i++ ){
+		pinMode(pwmPinArray[i], OUTPUT);
 	}
 }
 
@@ -130,31 +143,41 @@ void setup() {
 /********/
 void loop() {
 
+	// // TODO: Change parameters after heating up
+	for (int i = 0; i < pwmN; i++ ) {
+		pidArray[i].SetTunings(consKp, consKi, consKd);
+	}
+
 	// checkSerial();
 
 	// checkInstruction();
 
-	//TODO: ++i of i++ test
+	// checkVoltage();
 
-	// For every PT100 read the value and check errors
+	// For every PT100 read the values and check errors, then calculate the PWM
 	for (int i = 0; i < maxN; i++ ) {
+		//  Send MAX31865 number to target
+		sendMaxNumber(i);
+
 		// Read temperature values
 		tempArray[i] = maxArray[i].temperature(resitanceRTD, resitanceReference);
+
 		// Send data to target
-		sendData(i);
+		sendTempValues(i);
+
 		// Check for errors
 		checkFault(i);
+
 		// Calculate PWM values
-		// calculatePWM(i);
+		calculatePWM(i);
+
 		// Write PWM values
-		// analogWrite(pwmPinArray[i], pwmValueArray[i]);
+		analogWrite(pwmPinArray[i], pwmOutputArray[i]);
+
+		// calculatePower();
 
 		delay(10);
 	}
-
-	// checkVoltage();
-	// calculatePower();
-
 	Serial.println();
 
 	// TODO: replace with timer
@@ -165,65 +188,9 @@ void loop() {
 /*************/
 /* Functions */
 /*************/
-// Send values over serial connection to target
-void sendData(int i){
-	// Print Device to target
-	Serial.print('D');
-	Serial.print('\n');
-	if(i >= 5)	Serial.print((PIN_MAX_BOTTOM - 11) + (i * 2));
-	else Serial.print(PIN_MAX_BOTTOM + (i * 2));
-	Serial.print('\n');
-
-	// Print Values to target
-	Serial.print('V');
-	Serial.print('\n');
-	Serial.print(tempArray[i]);
-	Serial.print('\n');
-
-	// // Test print
-	// Serial.print("Temperature "); Serial.print(22+i); Serial.print(": "); Serial.print(tempArray[i]);
-}
-
-void checkFault(int i){
-	faultArray[i] = maxArray[i].readFault();
-	if (faultArray[i]) {
-
-		// Print Error to target
-		Serial.print('E');
-		Serial.print('\n');
-		Serial.print(faultArray[i], HEX);
-		Serial.print('\n');
-
-		// // Test print
-		// Serial.print("("); Serial.print("Fault 0x"); Serial.print(faultArray[i], HEX); Serial.print(") ");
-
-		// // TODO: receive error at target and check error value at target, thus eliminating this code
-		if (faultArray[i] & MAX31865_FAULT_HIGHTHRESH) {
-			Serial.print("RTD High Threshold");
-		}
-		if (faultArray[i] & MAX31865_FAULT_LOWTHRESH) {
-			Serial.print("RTD Low Threshold");
-		}
-		if (faultArray[i] & MAX31865_FAULT_REFINLOW) {
-			Serial.print("REFIN- > 0.85 x Bias");
-		}
-		if (faultArray[i] & MAX31865_FAULT_REFINHIGH) {
-			Serial.print("REFIN- < 0.85 x Bias - FORCE- open");
-		}
-		if (faultArray[i] & MAX31865_FAULT_RTDINLOW) {
-			Serial.print("RTDIN- < 0.85 x Bias - FORCE- open");
-		}
-		if (faultArray[i] & MAX31865_FAULT_OVUV) {
-			Serial.print("Under/Over voltage");
-		}
-
-		maxArray[i].clearFault();
-	}
-}
-
 void calculatePWM(int i){
-	int PID = 2;
-	pwmValueArray[i] = PID * tempArray[i];
+	// Take avergae for center MAX31865
+	pidInputArray[i] = tempArray[i];
 }
 
 void calculatePower(){
@@ -241,6 +208,69 @@ void checkVoltage(){
 	// //TODO: test
 	// Serial.print("INPUT V= ");
  //  	Serial.println(voltageSourceCompensated, 2);
+}
+
+void checkFault(int i){
+	faultArray[i] = maxArray[i].readFault();
+	if (faultArray[i]) {
+
+		// Print Error to target
+		Serial.print('E');
+		Serial.print('\n');
+		Serial.print(faultArray[i], HEX);
+		Serial.print('\n');
+
+		// // Test print
+		// Serial.print("("); Serial.print("Fault 0x"); Serial.print(faultArray[i], HEX); Serial.print(") ");
+
+		// //TODO: in target
+		// #define MAX31865_FAULT_HIGHTHRESH   0x80
+		// #define MAX31865_FAULT_LOWTHRESH    0x40
+		// #define MAX31865_FAULT_REFINLOW     0x20
+		// #define MAX31865_FAULT_REFINHIGH    0x10
+		// #define MAX31865_FAULT_RTDINLOW     0x08
+		// #define MAX31865_FAULT_OVUV   		0x04
+
+
+		// // TODO: receive error at target and check error value at target, thus eliminating this code
+		// if (faultArray[i] & MAX31865_FAULT_HIGHTHRESH) {
+		// 	Serial.print("RTD High Threshold");
+		// }
+		// if (faultArray[i] & MAX31865_FAULT_LOWTHRESH) {
+		// 	Serial.print("RTD Low Threshold");
+		// }
+		// if (faultArray[i] & MAX31865_FAULT_REFINLOW) {
+		// 	Serial.print("REFIN- > 0.85 x Bias");
+		// }
+		// if (faultArray[i] & MAX31865_FAULT_REFINHIGH) {
+		// 	Serial.print("REFIN- < 0.85 x Bias - FORCE- open");
+		// }
+		// if (faultArray[i] & MAX31865_FAULT_RTDINLOW) {
+		// 	Serial.print("RTDIN- < 0.85 x Bias - FORCE- open");
+		// }
+		// if (faultArray[i] & MAX31865_FAULT_OVUV) {
+		// 	Serial.print("Under/Over voltage");
+		// }
+
+		maxArray[i].clearFault();
+	}
+}
+
+// Send MAX31865 number over serial connection to target
+void sendMaxNumber(int i){
+	Serial.print('D');
+	Serial.print('\n');
+	if(i >= 5)	Serial.print((PIN_MAX_BOTTOM - 11) + (i * 2));
+	else Serial.print(PIN_MAX_BOTTOM + (i * 2));
+	Serial.print('\n');
+}
+
+// Send temperature values over serial connection to target
+void sendTempValues(int i){
+	Serial.print('V');
+	Serial.print('\n');
+	Serial.print(tempArray[i]);
+	Serial.print('\n');
 }
 
 /* Serial */
