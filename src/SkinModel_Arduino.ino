@@ -49,8 +49,8 @@ const int resitanceRTD 				= 100;
 // Constants for voltmeter
 const float voltageReference 		= 2.50;
 const float voltageCompensation 	= 0.155;
-const float resistorBig 			= 17990.0;
-const float resistorSmall 			= 820.0;
+const float resistorBig 			= 19820.0;
+const float resistorSmall 			= 938.0;
 const float analogResolution 		= 4095.0;
 
 // number of PWM and MAX31865 devices
@@ -81,7 +81,8 @@ float tempTarget = 34.00;
 // voltmeter
 float analogRaw = 0.0;
 float voltageIn = 0.0;
-float voltageOut = 0.0;
+float voltageSourceRaw = 0.0;
+float voltageSourceCompensated = 0.0;
 
 // PWM variables
 int pwmValue1; int pwmValue2; int pwmValue3; int pwmValue4; int pwmValue5; int pwmValue6;
@@ -144,9 +145,9 @@ void loop() {
 		// Check for errors
 		checkFault(i);
 		// Calculate PWM values
-		calculatePWM(i);
+		// calculatePWM(i);
 		// Write PWM values
-		analogWrite(pwmPinArray[i], pwmValueArray[i]);
+		// analogWrite(pwmPinArray[i], pwmValueArray[i]);
 
 		delay(10);
 	}
@@ -164,38 +165,20 @@ void loop() {
 /*************/
 /* Functions */
 /*************/
-void calculatePWM(int i){
-	int PID = 2;
-	pwmValueArray[i] = PID * tempArray[i];
-}
-
 // Send values over serial connection to target
 void sendData(int i){
-	if(i >= 5){
-		// Print Device to target
-		Serial.print('D');
-		Serial.print('\n');
-		Serial.print((PIN_MAX_BOTTOM - 11) + (i * 2));
-		Serial.print('\n');
+	// Print Device to target
+	Serial.print('D');
+	Serial.print('\n');
+	if(i >= 5)	Serial.print((PIN_MAX_BOTTOM - 11) + (i * 2));
+	else Serial.print(PIN_MAX_BOTTOM + (i * 2));
+	Serial.print('\n');
 
-		// Print Values to target
-		Serial.print('V');
-		Serial.print('\n');
-		Serial.print(tempArray[i]);
-		Serial.print('\n');
-	}
-	else{
-		Serial.print('D');
-		Serial.print('\n');
-		Serial.print(PIN_MAX_BOTTOM + (i * 2));
-		Serial.print('\n');
-
-		// Print Values to target
-		Serial.print('V');
-		Serial.print('\n');
-		Serial.print(tempArray[i]);
-		Serial.print('\n');
-	}
+	// Print Values to target
+	Serial.print('V');
+	Serial.print('\n');
+	Serial.print(tempArray[i]);
+	Serial.print('\n');
 
 	// // Test print
 	// Serial.print("Temperature "); Serial.print(22+i); Serial.print(": "); Serial.print(tempArray[i]);
@@ -215,29 +198,32 @@ void checkFault(int i){
 		// Serial.print("("); Serial.print("Fault 0x"); Serial.print(faultArray[i], HEX); Serial.print(") ");
 
 		// // TODO: receive error at target and check error value at target, thus eliminating this code
-		// if(displayFault){
-		// 	if (faultArray[i] & MAX31865_FAULT_HIGHTHRESH) {
-		// 		Serial.print("RTD High Threshold");
-		// 	}
-		// 	if (faultArray[i] & MAX31865_FAULT_LOWTHRESH) {
-		// 		Serial.print("RTD Low Threshold");
-		// 	}
-		// 	if (faultArray[i] & MAX31865_FAULT_REFINLOW) {
-		// 		Serial.print("REFIN- > 0.85 x Bias");
-		// 	}
-		// 	if (faultArray[i] & MAX31865_FAULT_REFINHIGH) {
-		// 		Serial.print("REFIN- < 0.85 x Bias - FORCE- open");
-		// 	}
-		// 	if (faultArray[i] & MAX31865_FAULT_RTDINLOW) {
-		// 		Serial.print("RTDIN- < 0.85 x Bias - FORCE- open");
-		// 	}
-		// 	if (faultArray[i] & MAX31865_FAULT_OVUV) {
-		// 		Serial.print("Under/Over voltage");
-		// 	}
-		// }
+		if (faultArray[i] & MAX31865_FAULT_HIGHTHRESH) {
+			Serial.print("RTD High Threshold");
+		}
+		if (faultArray[i] & MAX31865_FAULT_LOWTHRESH) {
+			Serial.print("RTD Low Threshold");
+		}
+		if (faultArray[i] & MAX31865_FAULT_REFINLOW) {
+			Serial.print("REFIN- > 0.85 x Bias");
+		}
+		if (faultArray[i] & MAX31865_FAULT_REFINHIGH) {
+			Serial.print("REFIN- < 0.85 x Bias - FORCE- open");
+		}
+		if (faultArray[i] & MAX31865_FAULT_RTDINLOW) {
+			Serial.print("RTDIN- < 0.85 x Bias - FORCE- open");
+		}
+		if (faultArray[i] & MAX31865_FAULT_OVUV) {
+			Serial.print("Under/Over voltage");
+		}
 
 		maxArray[i].clearFault();
 	}
+}
+
+void calculatePWM(int i){
+	int PID = 2;
+	pwmValueArray[i] = PID * tempArray[i];
 }
 
 void calculatePower(){
@@ -245,11 +231,16 @@ void calculatePower(){
 }
 
 void checkVoltage(){
+	// TODO: High frequency noice, if only checked irregularly than filter is required
 	analogRaw = analogRead(PIN_DC_SENSOR);
 	voltageIn = (analogRaw * voltageReference) / analogResolution;
-	voltageOut = voltageIn / (resistorSmall/(resistorBig+resistorSmall));
-	// Fix measured error margin
-	if(voltageOut > 0) voltageOut += voltageCompensation;
+	voltageSourceRaw = voltageIn / (resistorSmall/(resistorBig+resistorSmall));
+	// Error compensation, check documentation for calibration data
+	voltageSourceCompensated -= (0.0483*voltageSourceRaw)+0.0569;
+
+	// //TODO: test
+	// Serial.print("INPUT V= ");
+ //  	Serial.println(voltageSourceCompensated, 2);
 }
 
 /* Serial */
