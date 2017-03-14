@@ -46,8 +46,9 @@ Rens Doornbusch
 // Switch Cases
 #define PREPERATION			0
 #define TESTING				1
-#define ABORT					2
+#define FINISHED				2
 #define CANCELLED				3
+
 
 // Resistance of MAX31865's Reference resitor and RTD at 0 degrees
 const float resitanceReference	= 430.0;
@@ -76,7 +77,15 @@ float voltageSourceCompensated = 0.0;
 
 // Timer
 unsigned long timeControlPrevious = 0, timeSendPrevious = 0;
-unsigned long timeControlInterval = 1000, timeSendInterval = 500;
+unsigned long timeControlInterval = 10000, timeSendInterval = 2000;
+
+bool receivedStart 		= false;
+bool receivedFinish 		= false;
+bool receivedPrepare 	= false;
+bool receivedCancel 		= false;
+bool receivedTempTarget = false;
+
+bool reachedTempTarget = false;
 
 // PID + PWM
 double tempTarget = 34.0;
@@ -150,6 +159,14 @@ void setup() {
 	for(byte i = 0; i < pwmN; i++ ){
 		pinMode(pwmPinArray[i], OUTPUT);
 	}
+
+	for (byte m = 0; m < maxN; m++ ){
+		if(checkFault(m)){
+			sendFault(m);
+			// TODO: let op, dit hier?
+			state = CANCELLED;
+		}
+	}
 }
 
 
@@ -157,49 +174,65 @@ void setup() {
 /* Loop */
 /********/
 void loop() {
-
-	for (byte m = 0; m < maxN; m++ ){
-		if(checkFault(m)){
-			sendFault(m);
-			state = ABORT;
-		}
-		else{
-			if(checkSerial()){
-				getInstruction();
-			}
-		}
+	if(checkSerial()){
+		getInstruction();
 	}
 
 	switch(state){
 		case PREPERATION:
-			// getTempTarget();
-			for (byte m = 0; m < maxN; m++ ){
-				tempArray[m] = maxArray[m].temperature(resitanceRTD, resitanceReference);
-				delay(1);
-			}
-			for (byte p = 0; p < pwmN; p++ ){
-				// Calculate PWM values
-				calculatePwm(p);
-				// Write PWM values
-				analogWrite(pwmPinArray[p], pwmOutputArray[p]);
-			}
-		break;
+			receivedPrepare = false;
 
-		case ABORT:
-			Serial.print('A');
-		break;
+			if(receivedCancel){
+				state = CANCELLED;
+			}
+			else if(receivedTempTarget){
+				if(reachedTempTarget){
+					Serial.println("Setpoint reached");
+					Serial.println("Press Start");
+					if(receivedStart){
+						state = TESTING;
+					}
+				}
+			}
 
-		case CANCELLED:
+			// TODO: check reachedTempTarget
+
+			if(checkTimer(CONTROL)){
+				for (byte m = 0; m < maxN; m++ ){
+					tempArray[m] = maxArray[m].temperature(resitanceRTD, resitanceReference);
+					//  Send MAX31865 number to target
+					sendMax(m);
+					// Send data to target
+					sendTemp(m);
+				}
+				for (byte p = 0; p < pwmN; p++ ){
+					// Calculate PWM values
+					calculatePwm(p);
+					// Write PWM values
+					analogWrite(pwmPinArray[p], pwmOutputArray[p]);
+				}
+			}
 		break;
 
 		case TESTING:
+			receivedStart = false;
+
 			if(checkTimer(SEND)){
+				// For every MAX31865 check for errors
+				for (byte m = 0; m < maxN; m++ ){
+					if(checkFault(m)){
+						sendFault(m);
+						state = CANCELLED;
+					}
+				}
+
 				// For every MAX31865 read the value
 				for (byte m = 0; m < maxN; m++ ){
 					tempArray[m] = maxArray[m].temperature(resitanceRTD, resitanceReference);
 					delay(1);
 				}
 
+				// For every PWM Controller calculate and write values
 				if(checkTimer(CONTROL)){
 					for (byte p = 0; p < pwmN; p++ ){
 						// Calculate PWM values
@@ -209,6 +242,7 @@ void loop() {
 					}
 				}
 
+				// Send MAX31865 data
 				for (byte m = 0; m < maxN; m++ ){
 					//  Send MAX31865 number to target
 					sendMax(m);
@@ -216,6 +250,7 @@ void loop() {
 					sendTemp(m);
 				}
 
+				// Send PWM data
 				for (byte p = 0; p < pwmN; p++ ){
 					// Send PWM number
 					sendPwm(p);
@@ -229,6 +264,18 @@ void loop() {
 			}
 			Serial.println();
 		break;
+
+		case FINISHED:
+			receivedFinish = false;
+		break;
+
+		case CANCELLED:
+			// TODO: RUN ONCE in if
+			if(receivedCancel){
+				Serial.print('A');
+			}
+			receivedCancel = false;
+		break;
 	}
 }
 
@@ -238,13 +285,13 @@ void loop() {
 /*************/
 bool checkTimer(byte t){
 	if(t){
-		if(millis() - timeControlPrevious > 1000){
+		if(millis() - timeControlPrevious > timeControlInterval){
 			timeControlPrevious = millis();
 			return true;
 		}
 	}
 	else{
-		if(millis() - timeSendPrevious > 1000){
+		if(millis() - timeSendPrevious > timeSendInterval){
 			timeSendPrevious = millis();
 			return true;
 		}
@@ -317,16 +364,29 @@ bool checkSerial(){
 
 void getInstruction(){
 	switch(incomingByte){
+		case 'C':
+			receivedCancel = true;
+		break;
+
+		case 'S':
+			receivedStart = true;
+		break;
+
+		case 'F':
+			receivedFinish = true;
+		break;
+
 		case 'P':
-			state = PREPERATION;
+			receivedPrepare = true;
 		break;
 
 		case 'T':
-			state = TESTING;
-		break;
-
-		case 'C':
-			state = ABORT;
+		// TODO: LET OP already echoing byte
+			Serial.print('K');
+			Serial.print('\n');
+			tempTarget = Serial.read();
+			// TODO: ProcessIncomingData()
+			receivedTempTarget = true;
 		break;
 	}
 	incomingByte=' ';
