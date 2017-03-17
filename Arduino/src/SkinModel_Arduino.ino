@@ -1,6 +1,6 @@
 /*
 Copyright (c) 2016 TU Delft All Rights Reserved.
-Rens Doornbusch
+Developped by: Rens Doornbusch
 */
 
 // TODO: serial print(F()) vs Serial.print() vs Serial.write()
@@ -18,9 +18,11 @@ Rens Doornbusch
 #include <PID_v1.h>
 
 /* Constants */
-// Pin layout
+// Pin layout //
+// Voltmeter
 #define PIN_DC_SENSOR		A0
 
+// PWM pins
 #define PIN_PWM_BOTTOM		2
 #define PIN_PWM_SIDE1		3
 #define PIN_PWM_SIDE2		4
@@ -28,6 +30,7 @@ Rens Doornbusch
 #define PIN_PWM_SIDE4		6
 #define PIN_PWM_CENTER		7
 
+// MAX31865 or PT100 pins
 #define PIN_MAX_BOTTOM		23
 #define PIN_MAX_SIDE1		25
 #define PIN_MAX_SIDE2		27
@@ -39,58 +42,81 @@ Rens Doornbusch
 #define PIN_MAX_CENTER4		28
 #define PIN_MAX_CENTER5		30
 
+// Cases //
 // Timer Cases
-#define SEND					0
-#define CONTROL				1
+#define SEND									0
+#define CONTROL								1
+#define CONTROL_PID							2
+#define ERROR_CHECK							3
+
+// Cancel Cases
+#define NONE									0
+#define ERROR_SETUP							1
+#define ERROR_LOOP							2
+#define CANCEL_RECEIVED_PREPERATION		3
+#define CANCEL_RECEIVED_TESTING			3
 
 // Switch Cases
-#define PREPERATION			0
-#define TESTING				1
-#define FINISHED				2
-#define CANCELLED				3
+#define PREPERATION							0
+#define TESTING								1
+#define FINISHED								2
+#define CANCELLED								3
 
-
+// Values //
 // Resistance of MAX31865's Reference resitor and RTD at 0 degrees
-const float resitanceReference	= 430.0;
-const int resitanceRTD				= 100;
+const float resitanceReference = 430.0;
+const int resitanceRTD = 100;
 
 // Voltmeter
 const float voltageReference = 2.50, resistorBig = 19820.0, resistorSmall = 938.0, analogResolution = 4095.0;
-
-// Number of PWM and MAX31865 devices
-const byte pwmN = 6, maxN = 10;
 
 // PID
 const float pidSwitchError = 1.5;
 const float aggKp = 2000, aggKi = 0, aggKd = 0;
 const float consKp = 1500, consKi = 0.01, consKd = 0;
 
+// Number of PWM and MAX31865 devices
+const byte pwmN = 6, maxN = 10;
+
 /* Variables */
-// Switch
+// Cases //
+// Cancel
+byte cancelReason = NONE;
+// State Machine
 byte state = PREPERATION;
 
-// Serial
-byte incomingByte;
+// Serial //
+int incomingByte = ' ';
+
+// Flags //
+// Flags, triggered by Serial input
+bool receivedStart 					= false;
+bool receivedFinish 					= false;
+bool receivedCancel 					= false;
+bool receivedRestart				 	= false;
+bool receivedTempTarget 			= false;
+
+bool receivedSerialApplication 	= false;
+
+// Flags, triggered by event
+bool reachedTempTarget = false;
+
+// Values //
+// Target
+double tempTarget = 34.0;
 
 // Voltmeter
 float voltageSourceCompensated = 0.0;
 
 // Timer
-unsigned long timeControlPrevious = 0, timeSendPrevious = 0;
-unsigned long timeControlInterval = 10000, timeSendInterval = 2000;
+unsigned long timeControlPIDPrevious = 0, timeControlPrevious = 0, timeSendPrevious = 0, timeErrorCheckPrevious = 0;
+unsigned long timeControlPIDInterval = 30000, timeControlInterval = 5000, timeSendInterval = 2000, timeErrorCheckInterval = 10000;
 
-bool receivedStart 		= false;
-bool receivedFinish 		= false;
-bool receivedPrepare 	= false;
-bool receivedCancel 		= false;
-bool receivedTempTarget = false;
-
-bool reachedTempTarget = false;
-
-// PID + PWM
-double tempTarget = 34.0;
-double pidInput1; double pidInput2; double pidInput3; double pidInput4; double pidInput5; double pidInput6;
+// PWM
 double pwmOutput1; double pwmOutput2; double pwmOutput3; double pwmOutput4; double pwmOutput5; double pwmOutput6;
+
+// PID
+double pidInput1; double pidInput2; double pidInput3; double pidInput4; double pidInput5; double pidInput6;
 
 // MAX31865 variables
 float temp1; float temp2; float temp3; float temp4; float temp5; float temp6; float temp7; float temp8; float temp9; float temp10;
@@ -125,20 +151,24 @@ float tempArray [maxN] = {temp1, temp2, temp3, temp4, temp5, temp6, temp7, temp8
 uint16_t faultArray [maxN] = {fault1, fault2, fault3, fault4, fault5, fault6, fault7, fault8, fault9, fault10};
 
 // PWM
-PID pidArray [pwmN] = {myPID1, myPID2, myPID3, myPID4, myPID5, myPID6};
 byte pwmPinArray [pwmN] = {PIN_PWM_BOTTOM, PIN_PWM_SIDE1, PIN_PWM_SIDE2, PIN_PWM_SIDE3, PIN_PWM_SIDE4, PIN_PWM_CENTER};
-double pidInputArray [pwmN] = {pidInput1, pidInput2, pidInput3, pidInput4, pidInput5, pidInput6};
 double pwmOutputArray [pwmN] = {pwmOutput1, pwmOutput2, pwmOutput3, pwmOutput4, pwmOutput5, pwmOutput6};
+
+// PID
+PID pidArray [pwmN] = {myPID1, myPID2, myPID3, myPID4, myPID5, myPID6};
+double pidInputArray [pwmN] = {pidInput1, pidInput2, pidInput3, pidInput4, pidInput5, pidInput6};
 
 
 /*********/
 /* Setup */
 /*********/
 void setup() {
+	/* Settings */
 	// Set resolution to 12bit (0-4095)
 	analogWriteResolution(12);
 	analogReadResolution(12);
 
+	/* Setup Objects */
 	// TODO: Serial.begin was 19200! change to faster?
 	Serial.begin(19200);
 
@@ -155,16 +185,21 @@ void setup() {
 	}
 
 	/* Set pinmodes */
+	// Setup Voltmeter pin
 	pinMode(PIN_DC_SENSOR, INPUT);
+
+	// Setup PWM pins
 	for(byte i = 0; i < pwmN; i++ ){
 		pinMode(pwmPinArray[i], OUTPUT);
 	}
 
+	/* Setup Checks */
+	// Check for faults in MAX31865's
 	for (byte m = 0; m < maxN; m++ ){
 		if(checkFault(m)){
 			sendFault(m);
-			// TODO: let op, dit hier?
 			state = CANCELLED;
+			cancelReason = ERROR_SETUP;
 		}
 	}
 }
@@ -174,32 +209,39 @@ void setup() {
 /* Loop */
 /********/
 void loop() {
+	/* Check Serial */
 	if(checkSerial()){
-		getInstruction();
+		getSerialInstruction();
 	}
 
+	/* State Machine */
 	switch(state){
 		case PREPERATION:
-			receivedPrepare = false;
+			/* State Transitions */
+			receivedRestart = false;
 
 			if(receivedCancel){
 				state = CANCELLED;
+				cancelReason = CANCEL_RECEIVED_PREPERATION;
+				break;
 			}
 			else if(receivedTempTarget){
 				if(reachedTempTarget){
-					Serial.println("Setpoint reached");
-					Serial.println("Press Start");
+					// TODO: Serial Feedback
 					if(receivedStart){
 						state = TESTING;
+						break;
 					}
 				}
 			}
 
-			// TODO: check reachedTempTarget
-
-			if(checkTimer(CONTROL)){
+			/* State Actions */
+			if(checkTimer(CONTROL_PID)){
 				for (byte m = 0; m < maxN; m++ ){
 					tempArray[m] = maxArray[m].temperature(resitanceRTD, resitanceReference);
+
+					// TODO: check reachedTempTarget
+
 					//  Send MAX31865 number to target
 					sendMax(m);
 					// Send data to target
@@ -207,7 +249,7 @@ void loop() {
 				}
 				for (byte p = 0; p < pwmN; p++ ){
 					// Calculate PWM values
-					calculatePwm(p);
+					calculatePIDPWM(p);
 					// Write PWM values
 					analogWrite(pwmPinArray[p], pwmOutputArray[p]);
 				}
@@ -215,17 +257,33 @@ void loop() {
 		break;
 
 		case TESTING:
+			/* State Transitions */
 			receivedStart = false;
 
-			if(checkTimer(SEND)){
-				// For every MAX31865 check for errors
+			if(receivedCancel){
+				state = CANCELLED;
+				cancelReason = CANCEL_RECEIVED_TESTING;
+				break;
+			}
+			else if(receivedFinish){
+				state = FINISHED;
+				break;
+			}
+
+			// For every MAX31865 check for errors
+			if(checkTimer(ERROR_CHECK)){
 				for (byte m = 0; m < maxN; m++ ){
 					if(checkFault(m)){
 						sendFault(m);
+						cancelReason = ERROR_LOOP;
 						state = CANCELLED;
+						break;
 					}
 				}
+			}
 
+			/* State Actions */
+			if(checkTimer(SEND)){
 				// For every MAX31865 read the value
 				for (byte m = 0; m < maxN; m++ ){
 					tempArray[m] = maxArray[m].temperature(resitanceRTD, resitanceReference);
@@ -236,7 +294,7 @@ void loop() {
 				if(checkTimer(CONTROL)){
 					for (byte p = 0; p < pwmN; p++ ){
 						// Calculate PWM values
-						calculatePwm(p);
+						calculatePWM(p);
 						// Write PWM values
 						analogWrite(pwmPinArray[p], pwmOutputArray[p]);
 					}
@@ -259,22 +317,45 @@ void loop() {
 				}
 
 				// Send Voltage to target
-				checkVoltage();
+				calculateVoltage();
 				sendVoltage();
+
+				sendTime();
 			}
 			Serial.println();
 		break;
 
 		case FINISHED:
+			/* State Actions */
+			if(receivedFinish){
+				// Run once:
+				Serial.print("Finished");
+			}
+
+			/* State Transitions */
 			receivedFinish = false;
+
+			if(receivedRestart){
+				state = PREPERATION;
+				break;
+			}
 		break;
 
 		case CANCELLED:
-			// TODO: RUN ONCE in if
+			/* State Actions */
 			if(receivedCancel){
+				// Run once:
 				Serial.print('A');
+				Serial.print(cancelReason);
 			}
+
+			/* State Transitions */
 			receivedCancel = false;
+
+			if(receivedRestart){
+				state = PREPERATION;
+				break;
+			}
 		break;
 	}
 }
@@ -283,32 +364,90 @@ void loop() {
 /*************/
 /* Functions */
 /*************/
-bool checkTimer(byte t){
-	if(t){
-		if(millis() - timeControlPrevious > timeControlInterval){
-			timeControlPrevious = millis();
-			return true;
-		}
+/* Other */
+// Timer //
+// Check if enough time has passed
+bool checkTimer(byte timeCheck){
+	switch(timeCheck){
+		case CONTROL:
+			if(millis() - timeControlPrevious > timeControlInterval || timeControlPrevious==0){
+				timeControlPrevious = millis();
+				return true;
+			}
+			else
+				return false;
+		break;
+
+		case CONTROL_PID:
+			if(millis() - timeControlPIDPrevious > timeControlPIDInterval || timeControlPIDPrevious==0){
+				timeControlPIDPrevious = millis();
+				return true;
+			}
+			else
+				return false;
+		break;
+
+		case SEND:
+			if(millis() - timeSendPrevious > timeSendInterval){
+				timeSendPrevious = millis();
+				return true;
+			}
+			else
+				return false;
+		break;
+
+		case ERROR_CHECK:
+			if(millis() - timeErrorCheckPrevious > timeErrorCheckInterval){
+				timeErrorCheckPrevious = millis();
+				return true;
+			}
+			else
+				return false;
+		break;
 	}
-	else{
-		if(millis() - timeSendPrevious > timeSendInterval){
-			timeSendPrevious = millis();
-			return true;
-		}
-	}
-	return false;
 }
 
+// Errors //
+// Check for Faults in MAX31865
 bool checkFault(byte i){
 	faultArray[i] = maxArray[i].readFault();
 	if (faultArray[i]){
+		// TODO: remove following line if Errors are not sending
+		maxArray[i].clearFault();
 		return true;
 	}
 	maxArray[i].clearFault();
 	return false;
 }
 
-void calculatePwm(byte i){
+/* Control */
+// ... Controller //
+// TODO: Build a controller for the system, which is resilient to dynamic changes
+// Calculate the Output PWM
+void calculatePWM(byte i){
+	if(i <= 4){
+		pidInputArray[i] = tempArray[i];
+		// Temporary 1 on 1 control
+		pwmOutputArray[i] = pidInputArray[i];
+	}
+
+	// Take average for the five center MAX31865's
+	else if(i == 5){
+		float inputTotal = 0;
+		for(byte m = 5; m <= 9; m++){
+			inputTotal += tempArray[m];
+		}
+		float inputAverage = inputTotal / 5;
+
+		pidInputArray[i] = inputAverage;
+		// Temporary 1 on 1 control
+		pwmOutputArray[i] = pidInputArray[i];
+	}
+}
+
+// PID Controller //
+// Calculate the Output PWM by using a PID controller
+void calculatePIDPWM(byte i){
 	if(i <= 4){
 		pidInputArray[i] = tempArray[i];
 		checkPidSwitch(tempArray[i], i);
@@ -329,6 +468,7 @@ void calculatePwm(byte i){
 	}
 }
 
+// Check whether to use aggresive or normal PID
 void checkPidSwitch(float tempInput, byte i){
 	// When Error is bigger than defined PID Switch error, use aggresive tuning
 	if((tempTarget - tempInput) > pidSwitchError){
@@ -339,8 +479,10 @@ void checkPidSwitch(float tempInput, byte i){
 	}
 }
 
-void checkVoltage(){
-	// TODO: High frequency noice, if only checked irregularly than filter might be required
+// Measurements //
+// Calculate the current Voltage
+// TODO: Found high frequency noise during tests! If only checked with low frequency than filter might be required
+void calculateVoltage(){
 	float analogRaw = analogRead(PIN_DC_SENSOR);
 	float voltageIn = (analogRaw * voltageReference) / analogResolution;
 	float voltageSourceRaw = voltageIn / (resistorSmall/(resistorBig+resistorSmall));
@@ -349,6 +491,7 @@ void checkVoltage(){
 }
 
 /* Serial */
+// Receive Data //
 // Check incoming serial data
 bool checkSerial(){
 	//Read signal from computer
@@ -362,12 +505,9 @@ bool checkSerial(){
 	return false;
 }
 
-void getInstruction(){
+// Check incoming data for instructions
+void getSerialInstruction(){
 	switch(incomingByte){
-		case 'C':
-			receivedCancel = true;
-		break;
-
 		case 'S':
 			receivedStart = true;
 		break;
@@ -376,22 +516,48 @@ void getInstruction(){
 			receivedFinish = true;
 		break;
 
-		case 'P':
-			receivedPrepare = true;
+		case 'C':
+			receivedCancel = true;
+		break;
+
+		case 'R':
+			receivedRestart = true;
 		break;
 
 		case 'T':
-		// TODO: LET OP already echoing byte
-			Serial.print('K');
-			Serial.print('\n');
-			tempTarget = Serial.read();
-			// TODO: ProcessIncomingData()
+			tempTarget = float(getSerialValue());
 			receivedTempTarget = true;
+		break;
+
+		case 'A':
+			receivedSerialApplication = true;
 		break;
 	}
 	incomingByte=' ';
 }
 
+// Check incoming data for usable values
+// TODO: Working?
+// TODO: int?
+// TODO: Create fitting error if necessary
+int getSerialValue(){
+	int w = 0;
+	while(!Serial.available() && w < 10){
+		w++;
+		Serial.write('T');
+		delay(10);
+	}
+	delay(100);
+	if(Serial.available()){
+		Serial.write('#');
+		return Serial.read();
+	}
+	else
+		Serial.write("Can't receive Data!");
+}
+
+// Send Data //
+// TODO: send to App or send to Serial Monitor
 // Send MAX31865 data
 // Send MAX31865 number over serial connection to target
 void sendMax(byte i){
@@ -403,7 +569,7 @@ void sendMax(byte i){
 
 // Send temperature values over serial connection to target
 void sendTemp(byte i){
-	Serial.print('T');
+	Serial.print('C');
 	Serial.print('\n');
 	Serial.print(tempArray[i]);
 	Serial.print('\n');
@@ -428,7 +594,7 @@ void sendPwm(byte i){
 
 // Send voltage over serial connection to target
 void sendOutput(byte i){
-	Serial.print('V');
+	Serial.print('O');
 	Serial.print('\n');
 	Serial.print(pwmOutputArray[i]);
 	Serial.print('\n');
@@ -439,5 +605,13 @@ void sendVoltage(){
 	Serial.print('V');
 	Serial.print('\n');
 	Serial.print(voltageSourceCompensated);
+	Serial.print('\n');
+}
+
+// Send time over serial connection to target
+void sendTime(){
+	Serial.print('T');
+	Serial.print('\n');
+	Serial.print(millis());
 	Serial.print('\n');
 }
