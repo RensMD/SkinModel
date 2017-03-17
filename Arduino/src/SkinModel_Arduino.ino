@@ -4,8 +4,6 @@ Developped by: Rens Doornbusch
 */
 
 // TODO: serial print(F()) vs Serial.print() vs Serial.write()
-// TODO: Byte values working?
-// TODO: Decrease globals
 
 /**********/
 /* Header */
@@ -52,9 +50,10 @@ Developped by: Rens Doornbusch
 // Cancel Cases
 #define NONE									0
 #define ERROR_SETUP							1
-#define ERROR_LOOP							2
-#define CANCEL_RECEIVED_PREPERATION		3
-#define CANCEL_RECEIVED_TESTING			3
+#define ERROR_LOOP_PREPERATION			2
+#define ERROR_LOOP_TESTING					3
+#define CANCEL_RECEIVED_PREPERATION		4
+#define CANCEL_RECEIVED_TESTING			5
 
 // Switch Cases
 #define PREPERATION							0
@@ -99,7 +98,7 @@ bool receivedTempTarget 			= false;
 bool receivedSerialApplication 	= false;
 
 // Flags, triggered by event
-bool reachedTempTarget = false;
+bool reachedTempTarget 				= false;
 
 // Values //
 // Target
@@ -227,9 +226,22 @@ void loop() {
 			}
 			else if(receivedTempTarget){
 				if(reachedTempTarget){
-					// TODO: Serial Feedback
+					Serial.print("Reached Temp Target");
+					Serial.print("Press Start");
 					if(receivedStart){
 						state = TESTING;
+						break;
+					}
+				}
+			}
+
+			// For every MAX31865 check for errors
+			if(checkTimer(ERROR_CHECK)){
+				for (byte m = 0; m < maxN; m++ ){
+					if(checkFault(m)){
+						sendFault(m);
+						cancelReason = ERROR_LOOP_PREPERATION;
+						state = CANCELLED;
 						break;
 					}
 				}
@@ -240,7 +252,7 @@ void loop() {
 				for (byte m = 0; m < maxN; m++ ){
 					tempArray[m] = maxArray[m].temperature(resitanceRTD, resitanceReference);
 
-					// TODO: check reachedTempTarget
+					// TODO: check for reachedTempTarget
 
 					//  Send MAX31865 number to target
 					sendMax(m);
@@ -275,7 +287,7 @@ void loop() {
 				for (byte m = 0; m < maxN; m++ ){
 					if(checkFault(m)){
 						sendFault(m);
-						cancelReason = ERROR_LOOP;
+						cancelReason = ERROR_LOOP_TESTING;
 						state = CANCELLED;
 						break;
 					}
@@ -346,6 +358,7 @@ void loop() {
 			if(receivedCancel){
 				// Run once:
 				Serial.print('A');
+				Serial.print("Cancelled");
 				Serial.print(cancelReason);
 			}
 
