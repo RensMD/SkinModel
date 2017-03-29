@@ -461,9 +461,31 @@ void calculateVoltage(){
 	float voltageSourceRaw = voltageIn / (resistorSmall/(resistorBig+resistorSmall));
 	// Error compensation, check the documentation for info on the calibration constants
 	float voltageSourceCompensated = voltageSourceRaw - (0.0483 * voltageSourceRaw) + 0.0569;
-	// TODO: Find real voltagelost formula
-	float voltageLost = voltageSourceCompensated / 30;
-	voltageEffective = voltageSourceCompensated - voltageLost;
+	// For voltageLost data check documentation
+	float voltageLost = 0;
+	for (byte p = 0; p < pwmN; p++ ){
+		if(p==0){
+			voltageLost=0.2;
+		}
+		else if(p==1){
+			voltagelost = voltageSourceCompensated / 5000;
+		}
+		else if(p==2){
+			voltagelost = 0.0003 * (voltageSourceCompensated * voltageSourceCompensated) - (0.0071 * voltageSourceCompensated) + 0.0804;
+		}
+		else if(p==3){
+			voltagelost = voltageSourceCompensated / 7500;
+		}
+		else if(p==4){
+			voltagelost = voltageSourceCompensated / 10000;
+		}
+		else if(p==5){
+			voltagelost = 0.0027 * voltageSourceCompensated - 0.0038;
+		}
+		// TODO: create Array
+		voltageEffective = voltageSourceCompensated - voltageLost;
+	}
+
 }
 
 void calculateEnergy(){
