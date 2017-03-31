@@ -105,11 +105,11 @@ float allowedDeviation = 0.1;
 
 // Timer
 unsigned long timeControlPrevious = 0, timeSendPrevious = 0, timeErrorCheckPrevious = 0;
-unsigned long timeControlInterval = 1000, timeSendInterval = 1000, timeErrorCheckInterval = 30000;
+unsigned long timeControlInterval = 1000, timeSendInterval = 2000, timeErrorCheckInterval = 30000;
 unsigned long timeStart, timePrevious, timeNow;
 
 // Voltmeter
-float voltageEffective;
+float voltageEffectiveBottom, voltageEffectiveSide1, voltageEffectiveSide2, voltageEffectiveSide3, voltageEffectiveSide4, voltageEffectiveCenter;
 
 // Energy
 float energyBottom, energySide1, energySide2, energySide3, energySide4, energyCenter;
@@ -135,6 +135,8 @@ Adafruit_MAX31865 maxCenter4 	= Adafruit_MAX31865(PIN_MAX_CENTER4);
 Adafruit_MAX31865 maxCenter5 	= Adafruit_MAX31865(PIN_MAX_CENTER5);
 
 /* Arrays */
+// Voltage
+float voltageEffectiveArray [pwmN] = {voltageEffectiveBottom, voltageEffectiveSide1, voltageEffectiveSide2, voltageEffectiveSide3, voltageEffectiveSide4, voltageEffectiveCenter};
 // Energy
 float energyConsumptionArray [pwmN] = {energyBottom, energySide1, energySide2, energySide3, energySide4, energyCenter};
 
@@ -219,7 +221,8 @@ void loop() {
 					break;
 				}
 				if(checkTimer(SEND)){
-					Serial.println("Reached Temp Target, Press Start");
+					// Serial.println("Reached Temp Target, Press Start");
+					Serial.println('R');
 				}
 			}
 
@@ -319,7 +322,6 @@ void loop() {
 				for (byte p = 0; p < pwmN; p++ ){
 					sendPWM(p);
 				}
-				sendOther();
 			}
 		break;
 
@@ -327,7 +329,8 @@ void loop() {
 			/* State Transitions */
 			// Run once:
 			if(receivedFinish){
-				Serial.println("Finished");
+				// Serial.println("Done");
+				Serial.println('D');
 				receivedFinish = false;
 			}
 
@@ -341,7 +344,8 @@ void loop() {
 			/* State Transitions */
 			// Run once:
 			if(receivedCancel){
-				Serial.println("Cancelled: ");
+				// Serial.println("Cancelled: ");
+				Serial.println('C');
 				Serial.println(cancelReason);
 				receivedCancel = false;
 			}
@@ -418,10 +422,8 @@ float mapfloat(long x, long in_min, long in_max, long out_min, long out_max){
 }
 
 /* Control */
-// ... Controller //
-// TODO: Selection option for which PT100's to use for Calculation
 // TODO: The current controller is a dummy controller,
-// TODO: Build a controller for the system, which is resilient to dynamic changes/
+// TODO: Build a controller for the system, which is resilient to dynamic changes
 // Calculate the Output PWM
 void calculatePWM(byte i){
 	if(i <= 4){
@@ -433,23 +435,33 @@ void calculatePWM(byte i){
 
 	// Take average for the five center MAX31865's
 	else if(i == 5){
+		// TODO: Selection option for which PT100's to use for Calculation
+		// Example:
+		// use sensor 6 and 8
+		// take tempArray[6] and tempArray[8]
+		// use those to calculate average
+		// use average for control
+
 		float inputTotal = 0;
 		for(byte m = 5; m <= 9; m++)
 			inputTotal += tempArray[m];
-
 		float inputAverage = inputTotal / 5;
 
-		if(inputAverage>tempTarget+allowedDeviation){
+		if(inputAverage > tempTarget + allowedDeviation){
 			pwmOutputArray[i]--;
 			reachedTempTarget = false;
 		}
-		else if(inputAverage<tempTarget-allowedDeviation){
+		else if(inputAverage < tempTarget - allowedDeviation){
 			pwmOutputArray[i]++;
 			reachedTempTarget = false;
 		}
 		else if(inputAverage<=tempTarget+allowedDeviation && inputAverage>tempTarget-allowedDeviation)
 			reachedTempTarget = true;
 	}
+
+	// Set the time on the moment of control change
+	timePrevious = timeNow;
+	timeNow = millis();
 }
 
 // Measurements //
@@ -461,36 +473,29 @@ void calculateVoltage(){
 	float voltageSourceRaw = voltageIn / (resistorSmall/(resistorBig+resistorSmall));
 	// Error compensation, check the documentation for info on the calibration constants
 	float voltageSourceCompensated = voltageSourceRaw - (0.0483 * voltageSourceRaw) + 0.0569;
-	// For voltageLost data check documentation
+	// For voltageLost data check documentation MOSFET Voltagelost
 	float voltageLost = 0;
 	for (byte p = 0; p < pwmN; p++ ){
-		if(p==0){
-			voltageLost=0.2;
-		}
-		else if(p==1){
-			voltagelost = voltageSourceCompensated / 5000;
-		}
-		else if(p==2){
-			voltagelost = 0.0003 * (voltageSourceCompensated * voltageSourceCompensated) - (0.0071 * voltageSourceCompensated) + 0.0804;
-		}
-		else if(p==3){
-			voltagelost = voltageSourceCompensated / 7500;
-		}
-		else if(p==4){
-			voltagelost = voltageSourceCompensated / 10000;
-		}
-		else if(p==5){
-			voltagelost = 0.0027 * voltageSourceCompensated - 0.0038;
-		}
-		// TODO: create Array
-		voltageEffective = voltageSourceCompensated - voltageLost;
-	}
+		if(p==0)
+			voltageLost = 0.2;
+		else if(p==1)
+			voltageLost = voltageSourceCompensated / 5000;
+		else if(p==2)
+			voltageLost = 0.0003 * (voltageSourceCompensated * voltageSourceCompensated) - (0.0071 * voltageSourceCompensated) + 0.0804;
+		else if(p==3)
+			voltageLost = voltageSourceCompensated / 7500;
+		else if(p==4)
+			voltageLost = voltageSourceCompensated / 10000;
+		else if(p==5)
+			voltageLost = 0.0027 * voltageSourceCompensated - 0.0038;
 
+		voltageEffectiveArray[p] = voltageSourceCompensated - voltageLost;
+	}
 }
 
 void calculateEnergy(){
 	for (byte p = 0; p < pwmN; p++ ){
-		float voltageLoad = voltageEffective * mapfloat(pwmOutputArray[p], 0, 4095, 0, 1);
+		float voltageLoad = voltageEffectiveArray[p] * mapfloat(pwmOutputArray[p], 0, 4095, 0, 1);
 		// Power Calculation P=(V^2)/R
 		float power = (voltageLoad * voltageLoad) / pwmResistanceArray[p];
 		// Energy Calculation E=P*t
@@ -579,7 +584,7 @@ void sendMax(byte i){
 
 // Send temperature values over serial connection to target
 void sendTemp(byte i){
-	Serial.println('C');
+	Serial.println('T');
 	Serial.println(tempArray[i]);
 }
 
@@ -598,12 +603,8 @@ void sendPWM(byte i){
 	Serial.println(pwmOutputArray[i]);
 	Serial.println('E');
 	Serial.println(energyConsumptionArray[i]);
-}
-
-// Send voltage and time over serial connection to target
-void sendOther(){
 	Serial.println('V');
-	Serial.println(voltageEffective);
-	Serial.println('T');
-	Serial.println(timeNow/1000);
+	Serial.println(voltageEffectiveArray[i]);
+	Serial.println('S');
+	Serial.println(timeNow);
 }
