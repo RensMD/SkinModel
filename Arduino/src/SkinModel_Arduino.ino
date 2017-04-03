@@ -255,6 +255,9 @@ void loop() {
 					// Write PWM values
 					analogWrite(pwmPinArray[p], pwmOutputArray[p]);
 				}
+				// Set the time on the moment of control change
+				timePrevious = timeNow;
+				timeNow = millis();
 			}
 		break;
 
@@ -322,6 +325,8 @@ void loop() {
 				for (byte p = 0; p < pwmN; p++ ){
 					sendPWM(p);
 				}
+
+				sendTime();
 			}
 		break;
 
@@ -458,10 +463,6 @@ void calculatePWM(byte i){
 		else if(inputAverage<=tempTarget+allowedDeviation && inputAverage>tempTarget-allowedDeviation)
 			reachedTempTarget = true;
 	}
-
-	// Set the time on the moment of control change
-	timePrevious = timeNow;
-	timeNow = millis();
 }
 
 // Measurements //
@@ -605,6 +606,10 @@ void sendPWM(byte i){
 	Serial.println(energyConsumptionArray[i]);
 	Serial.println('V');
 	Serial.println(voltageEffectiveArray[i]);
+}
+
+// Send timestamp
+void sendTime(){
 	Serial.println('S');
 	Serial.println(timeNow);
 }
