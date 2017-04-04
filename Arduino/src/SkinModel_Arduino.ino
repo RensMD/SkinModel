@@ -220,10 +220,8 @@ void loop() {
 					state = TESTING;
 					break;
 				}
-				if(checkTimer(SEND)){
-					// Serial.println("Reached Temp Target, Press Start");
-					Serial.println('R');
-				}
+				if(checkTimer(SEND))
+					sendReady();
 			}
 
 			// Check for MAX31865 errors
@@ -334,8 +332,7 @@ void loop() {
 			/* State Transitions */
 			// Run once:
 			if(receivedFinish){
-				// Serial.println("Done");
-				Serial.println('D');
+				sendFinished();
 				receivedFinish = false;
 			}
 
@@ -349,9 +346,7 @@ void loop() {
 			/* State Transitions */
 			// Run once:
 			if(receivedCancel){
-				// Serial.println("Cancelled: ");
-				Serial.println('C');
-				Serial.println(cancelReason);
+				sendCancel();
 				receivedCancel = false;
 			}
 
@@ -519,6 +514,22 @@ bool checkSerial(){
 	return false;
 }
 
+// Check incoming data for usable values
+// TODO: Check if function is working
+// TODO: Which type for return function?
+// TODO: Create fitting error if necessary
+float getSerialValue(){
+	int w = 0;
+	while(!Serial.available() && w < 10){
+		w++;
+		delay(10);
+	}
+	delay(100);
+	if(Serial.available()){
+		return Serial.read();
+	}
+}
+
 // Check incoming data for instructions
 void getSerialInstruction(){
 	switch(incomingByte){
@@ -553,26 +564,6 @@ void getSerialInstruction(){
 		break;
 	}
 	incomingByte=' ';
-}
-
-// Check incoming data for usable values
-// TODO: Check if function is working
-// TODO: Which type for return function?
-// TODO: Create fitting error if necessary
-float getSerialValue(){
-	int w = 0;
-	while(!Serial.available() && w < 10){
-		w++;
-		Serial.write('T');
-		delay(10);
-	}
-	delay(100);
-	if(Serial.available()){
-		Serial.write('#');
-		return Serial.read();
-	}
-	else
-		Serial.write("Can't receive Data!");
 }
 
 // Send Data //
@@ -612,4 +603,17 @@ void sendPWM(byte i){
 void sendTime(){
 	Serial.println('S');
 	Serial.println(timeNow);
+}
+
+void sendCancel(){
+	Serial.println('A');
+	Serial.println(cancelReason);
+}
+
+void sendFinished(){
+	Serial.println('Z');
+}
+
+void sendReady(){
+	Serial.println('H');
 }

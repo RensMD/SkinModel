@@ -1,8 +1,3 @@
-/*
-  DC Voltmeter Using a Voltage Divider
-  + PWM Control MOSFETS
-*/
-
 #define analogInput A0 
 #define pwmPin1 2
 #define pwmPin2 3
@@ -17,7 +12,6 @@ float R1 = 19820.0;     // Resistor 1
 float R2 = 938.0;       // Resistor 2
 float raw = 0;          // Raw ADC measurement
 float vref = 2.50;      // Reference voltage
-//float res = 1023.0;     // Resolution of the ADC
 float res = 4095.0;     // Resolution of the ADC
 
 void setup(){
@@ -28,13 +22,13 @@ void setup(){
   pinMode(pwmPin4, OUTPUT);
   pinMode(pwmPin5, OUTPUT);
   pinMode(pwmPin6, OUTPUT);
-
-//  analogReference(EXTERNAL); 
+  
   analogReadResolution(12);
-//  analogWriteResolution(12);
+  analogWriteResolution(12);
    
   Serial.begin(9600);
 }
+
 void loop(){
   analogWrite(pwmPin1, 255);
   analogWrite(pwmPin2, 255);
